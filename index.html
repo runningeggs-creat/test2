@@ -144,7 +144,7 @@
       </div>
 
       <div class="card center-card">
-        Fight the AI. Knock it off the stage.<br />Higher damage = stronger knockback.
+        Normal attack builds damage.<br />Heavy attack has startup risk, but launches hard.
       </div>
 
       <div class="card">
@@ -159,8 +159,8 @@
     <canvas id="game" width="960" height="540"></canvas>
 
     <div class="controls">
-      <div class="card"><b>Your controls:</b> A/D move · W jump · F attack · G heavy attack</div>
-      <div class="card"><b>AI:</b> Moves and attacks automatically. No Player 2 controls needed.</div>
+      <div class="card"><b>Your controls:</b> A/D move · W jump · F normal attack · G heavy smash</div>
+      <div class="card"><b>Attack design:</b> F = fast damage stacking. G = slow, risky, powerful knockout move.</div>
     </div>
 
     <button onclick="resetGame()">Restart Match</button>
@@ -215,12 +215,15 @@
         this.lives = 3;
         this.attackCooldown = 0;
         this.attackTimer = 0;
-        this.heavyTimer = 0;
+        this.heavyStartup = 0;
+        this.heavyActive = 0;
+        this.heavyEndLag = 0;
         this.invincible = 0;
         this.stun = 0;
         this.aiDecisionTimer = 0;
         this.aiMove = 0;
         this.aiWantsJump = false;
+        this.heavyHasHit = false;
       }
 
       respawn() {
@@ -233,6 +236,15 @@
         this.stun = 0;
         this.jumps = 2;
         this.attackCooldown = 35;
+        this.attackTimer = 0;
+        this.heavyStartup = 0;
+        this.heavyActive = 0;
+        this.heavyEndLag = 0;
+        this.heavyHasHit = false;
+      }
+
+      get isBusy() {
+        return this.heavyStartup > 0 || this.heavyActive > 0 || this.heavyEndLag > 0;
       }
 
       update(opponent) {
@@ -240,9 +252,10 @@
 
         if (this.attackCooldown > 0) this.attackCooldown--;
         if (this.attackTimer > 0) this.attackTimer--;
-        if (this.heavyTimer > 0) this.heavyTimer--;
         if (this.invincible > 0) this.invincible--;
         if (this.stun > 0) this.stun--;
+
+        this.updateHeavyState(opponent);
 
         if (this.stun <= 0) {
           if (this.isAI) {
@@ -291,26 +304,53 @@
         }
       }
 
+      updateHeavyState(opponent) {
+        if (this.heavyStartup > 0) {
+          this.heavyStartup--;
+          this.vx *= 0.68;
+          if (this.heavyStartup === 0) {
+            this.heavyActive = 7;
+            this.heavyHasHit = false;
+            burst(this.x + this.w / 2 + this.facing * 35, this.y + 28, '#fde047', 10);
+          }
+        } else if (this.heavyActive > 0) {
+          this.heavyActive--;
+          this.vx *= 0.78;
+          if (!this.heavyHasHit) {
+            this.tryHit(opponent, true);
+          }
+          if (this.heavyActive === 0) {
+            this.heavyEndLag = 28;
+          }
+        } else if (this.heavyEndLag > 0) {
+          this.heavyEndLag--;
+          this.vx *= 0.72;
+        }
+      }
+
       playerControl(opponent) {
-        if (keys['a']) {
+        const canMove = !this.isBusy;
+        const canAct = !this.isBusy;
+
+        if (canMove && keys['a']) {
           this.vx -= 0.85;
           this.facing = -1;
         }
-        if (keys['d']) {
+        if (canMove && keys['d']) {
           this.vx += 0.85;
           this.facing = 1;
         }
 
-        if (keys['w'] && !this.jumpHeld && this.jumps > 0) {
+        if (canMove && keys['w'] && !this.jumpHeld && this.jumps > 0) {
           this.jump();
         }
 
-        if (keys['f'] && !this.attackHeld && this.attackCooldown <= 0) {
-          this.startAttack(opponent, false);
+        if (canAct && keys['f'] && !this.attackHeld && this.attackCooldown <= 0) {
+          this.startNormalAttack(opponent);
         }
 
-        if (keys['g'] && !this.heavyHeld && this.attackCooldown <= 0) {
-          this.startAttack(opponent, true);
+        if (canAct && keys['g'] && !this.heavyHeld && this.attackCooldown <= 0) {
+          this.startHeavyAttack();
         }
 
         this.jumpHeld = keys['w'];
@@ -324,6 +364,8 @@
         const distanceX = opponentCenterX - centerX;
         const absX = Math.abs(distanceX);
         const distanceY = opponent.y - this.y;
+        const canMove = !this.isBusy;
+        const canAct = !this.isBusy;
 
         this.facing = distanceX >= 0 ? 1 : -1;
 
@@ -344,33 +386,37 @@
           } else if (offMainStage && belowStage) {
             this.aiMove = this.x < canvas.width / 2 ? 1 : -1;
             this.aiWantsJump = true;
-          } else if (absX > 75) {
+          } else if (absX > 78) {
             this.aiMove = distanceX > 0 ? 1 : -1;
-            this.aiWantsJump = Math.random() < 0.18 || distanceY < -55;
+            this.aiWantsJump = Math.random() < 0.14 || distanceY < -55;
           } else {
-            this.aiMove = Math.random() < 0.45 ? 0 : -Math.sign(distanceX || 1);
-            this.aiWantsJump = Math.random() < 0.06;
+            this.aiMove = Math.random() < 0.55 ? 0 : -Math.sign(distanceX || 1);
+            this.aiWantsJump = Math.random() < 0.05;
           }
         } else {
           this.aiDecisionTimer--;
         }
 
-        this.vx += this.aiMove * 0.74;
+        if (canMove) {
+          this.vx += this.aiMove * 0.74;
 
-        if (this.aiWantsJump && this.jumps > 0) {
-          this.jump();
-          this.aiWantsJump = false;
+          if (this.aiWantsJump && this.jumps > 0) {
+            this.jump();
+            this.aiWantsJump = false;
+          }
         }
 
         const sameHeightEnough = Math.abs(distanceY) < 80;
-        const closeEnough = absX < 70 && sameHeightEnough;
-        const heavyChance = opponent.damage > 65 ? 0.42 : 0.18;
+        const closeForNormal = absX < 62 && sameHeightEnough;
+        const closeForHeavy = absX < 92 && sameHeightEnough;
+        const opponentHighDamage = opponent.damage >= 75;
+        const opponentNearEdge = opponent.x < 270 || opponent.x > 650;
 
-        if (closeEnough && this.attackCooldown <= 0) {
-          if (Math.random() < heavyChance) {
-            this.startAttack(opponent, true);
-          } else {
-            this.startAttack(opponent, false);
+        if (canAct && this.attackCooldown <= 0) {
+          if (closeForHeavy && opponentHighDamage && opponentNearEdge && Math.random() < 0.28) {
+            this.startHeavyAttack();
+          } else if (closeForNormal && Math.random() < 0.75) {
+            this.startNormalAttack(opponent);
           }
         }
       }
@@ -382,46 +428,73 @@
         burst(this.x + this.w / 2, this.y + this.h, 'white', 7);
       }
 
-      startAttack(opponent, isHeavy) {
-        if (isHeavy) {
-          this.heavyTimer = 18;
-          this.attackCooldown = this.isAI ? 62 : 54;
-        } else {
-          this.attackTimer = 11;
-          this.attackCooldown = this.isAI ? 34 : 26;
-        }
-
-        this.tryHit(opponent, isHeavy);
+      startNormalAttack(opponent) {
+        this.attackTimer = 10;
+        this.attackCooldown = this.isAI ? 30 : 22;
+        this.tryHit(opponent, false);
       }
 
-      attackBox(isHeavy) {
-        const range = isHeavy ? 68 : 52;
-        const height = isHeavy ? 48 : 36;
+      startHeavyAttack() {
+        this.heavyStartup = this.isAI ? 28 : 24;
+        this.heavyActive = 0;
+        this.heavyEndLag = 0;
+        this.heavyHasHit = false;
+        this.attackCooldown = this.isAI ? 82 : 74;
+        this.vx *= 0.25;
+        burst(this.x + this.w / 2, this.y + this.h / 2, '#fde047', 6);
+      }
+
+      normalAttackBox() {
         return {
-          x: this.facing === 1 ? this.x + this.w : this.x - range,
-          y: this.y + 15,
-          w: range,
-          h: height
+          x: this.facing === 1 ? this.x + this.w : this.x - 48,
+          y: this.y + 16,
+          w: 48,
+          h: 34
+        };
+      }
+
+      heavyAttackBox() {
+        return {
+          x: this.facing === 1 ? this.x + this.w - 3 : this.x - 82 + 3,
+          y: this.y + 5,
+          w: 82,
+          h: 58
         };
       }
 
       tryHit(opponent, isHeavy) {
-        const box = this.attackBox(isHeavy);
+        const box = isHeavy ? this.heavyAttackBox() : this.normalAttackBox();
         if (opponent.invincible > 0) return;
 
         if (rectsOverlap(box, opponent)) {
-          const damageGain = isHeavy ? 18 : 9;
-          const base = isHeavy ? 8.8 : 5.4;
-          const scaling = opponent.damage * (isHeavy ? 0.074 : 0.047);
-          const direction = this.facing;
+          if (isHeavy) {
+            this.heavyHasHit = true;
+            const direction = this.facing;
+            const damageGain = 7;
+            const baseKnockback = 15.5;
+            const scaling = opponent.damage * 0.105;
 
-          opponent.damage += damageGain;
-          opponent.vx = direction * (base + scaling);
-          opponent.vy = -(isHeavy ? 8.8 : 6.2) - opponent.damage * 0.012;
-          opponent.stun = isHeavy ? 24 : 13;
-          hitPause = isHeavy ? 8 : 5;
-          screenShake = isHeavy ? 12 : 7;
-          burst(opponent.x + opponent.w / 2, opponent.y + opponent.h / 2, isHeavy ? '#fde047' : '#ffffff', isHeavy ? 23 : 13);
+            opponent.damage += damageGain;
+            opponent.vx = direction * (baseKnockback + scaling);
+            opponent.vy = -7.8 - opponent.damage * 0.012;
+            opponent.stun = 32;
+            hitPause = 12;
+            screenShake = 19;
+            burst(opponent.x + opponent.w / 2, opponent.y + opponent.h / 2, '#fde047', 38);
+          } else {
+            const direction = this.facing;
+            const damageGain = 8;
+            const baseKnockback = 3.4;
+            const scaling = opponent.damage * 0.018;
+
+            opponent.damage += damageGain;
+            opponent.vx = direction * (baseKnockback + scaling);
+            opponent.vy = -4.7;
+            opponent.stun = 11;
+            hitPause = 4;
+            screenShake = 5;
+            burst(opponent.x + opponent.w / 2, opponent.y + opponent.h / 2, '#ffffff', 11);
+          }
         }
       }
 
@@ -436,6 +509,13 @@
         ctx.beginPath();
         ctx.ellipse(0, this.h / 2 + 8, this.w * .55, 8, 0, 0, Math.PI * 2);
         ctx.fill();
+
+        if (this.heavyStartup > 0) {
+          ctx.fillStyle = 'rgba(253,224,71,.35)';
+          ctx.beginPath();
+          ctx.arc(0, 0, 42 + Math.sin(this.heavyStartup * 0.6) * 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
         ctx.fillStyle = this.color;
         roundRect(-this.w / 2, -this.h / 2, this.w, this.h, 12);
@@ -456,12 +536,28 @@
         ctx.fill();
 
         ctx.strokeStyle = this.darkColor;
-        ctx.lineWidth = 7;
+        ctx.lineWidth = this.heavyActive > 0 ? 11 : 7;
         ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(this.facing * 12, -2);
-        const armReach = this.attackTimer > 0 ? 35 : this.heavyTimer > 0 ? 48 : 20;
-        ctx.lineTo(this.facing * armReach, this.heavyTimer > 0 ? -7 : 7);
+
+        let armReach = 20;
+        let armY = 7;
+        if (this.attackTimer > 0) {
+          armReach = 34;
+          armY = 7;
+        } else if (this.heavyStartup > 0) {
+          armReach = -this.facing * 10;
+          armY = -12;
+        } else if (this.heavyActive > 0) {
+          armReach = 58;
+          armY = -6;
+        } else if (this.heavyEndLag > 0) {
+          armReach = 14;
+          armY = 18;
+        }
+
+        ctx.lineTo(this.facing * armReach, armY);
         ctx.stroke();
 
         if (this.isAI) {
@@ -474,12 +570,37 @@
 
         ctx.restore();
 
-        if (this.attackTimer > 0 || this.heavyTimer > 0) {
-          const isHeavy = this.heavyTimer > 0;
-          const box = this.attackBox(isHeavy);
-          ctx.fillStyle = isHeavy ? 'rgba(253,224,71,.35)' : 'rgba(255,255,255,.28)';
-          roundRect(box.x, box.y, box.w, box.h, 18);
+        if (this.attackTimer > 0) {
+          const box = this.normalAttackBox();
+          ctx.fillStyle = 'rgba(255,255,255,.25)';
+          roundRect(box.x, box.y, box.w, box.h, 16);
           ctx.fill();
+        }
+
+        if (this.heavyActive > 0) {
+          const box = this.heavyAttackBox();
+          ctx.fillStyle = 'rgba(253,224,71,.45)';
+          roundRect(box.x, box.y, box.w, box.h, 20);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(253,224,71,.9)';
+          ctx.lineWidth = 4;
+          ctx.stroke();
+        }
+
+        if (this.heavyStartup > 0) {
+          ctx.fillStyle = 'rgba(17,24,39,.8)';
+          ctx.font = '900 14px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('CHARGING', this.x + this.w / 2, this.y - 12);
+          ctx.textAlign = 'left';
+        }
+
+        if (this.heavyEndLag > 0) {
+          ctx.fillStyle = 'rgba(17,24,39,.75)';
+          ctx.font = '900 13px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('RECOVERING', this.x + this.w / 2, this.y - 12);
+          ctx.textAlign = 'left';
         }
       }
     }
@@ -605,6 +726,23 @@
       ctx.textAlign = 'left';
     }
 
+    function drawAttackGuide() {
+      ctx.fillStyle = 'rgba(15,23,42,.62)';
+      roundRect(16, 16, 300, 82, 16);
+      ctx.fill();
+      ctx.fillStyle = 'white';
+      ctx.font = '800 15px Arial';
+      ctx.fillText('F: Normal Attack', 32, 43);
+      ctx.font = '600 13px Arial';
+      ctx.fillText('Fast. Builds damage. Low knockback.', 32, 62);
+      ctx.fillStyle = '#fde047';
+      ctx.font = '800 15px Arial';
+      ctx.fillText('G: Heavy Smash', 32, 84);
+      ctx.fillStyle = 'white';
+      ctx.font = '600 13px Arial';
+      ctx.fillText('Slow startup + recovery. Big launch.', 160, 84);
+    }
+
     function gameLoop() {
       ctx.save();
 
@@ -618,6 +756,7 @@
 
       drawBackground();
       drawPlatforms();
+      drawAttackGuide();
 
       if (hitPause <= 0) {
         player.update(ai);
