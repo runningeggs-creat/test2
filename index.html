@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mini Platform Fighter</title>
+  <title>Mini Platform Fighter VS AI</title>
   <style>
     * {
       box-sizing: border-box;
@@ -16,7 +16,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: radial-gradient(circle at top, #23395d 0%, #111827 55%, #050816 100%);
+      background: radial-gradient(circle at top, #253858 0%, #111827 55%, #050816 100%);
       font-family: Arial, Helvetica, sans-serif;
       color: white;
       overflow: hidden;
@@ -52,7 +52,7 @@
     }
 
     .player-name {
-      font-weight: 800;
+      font-weight: 900;
       font-size: 18px;
       margin-bottom: 6px;
     }
@@ -62,7 +62,7 @@
       justify-content: center;
       gap: 16px;
       font-size: 18px;
-      font-weight: 700;
+      font-weight: 800;
     }
 
     .percent {
@@ -70,8 +70,9 @@
       font-weight: 900;
     }
 
-    .red { color: #ff6b6b; }
     .blue { color: #5ee7ff; }
+    .red { color: #ff6b6b; }
+    .yellow { color: #fde047; }
 
     .center-card {
       font-size: 14px;
@@ -131,11 +132,11 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>Mini Platform Fighter</h1>
+    <h1>Mini Platform Fighter VS AI</h1>
 
     <div class="hud">
       <div class="card">
-        <div class="player-name blue">Player 1</div>
+        <div class="player-name blue">You</div>
         <div class="stats">
           <span>Damage: <span id="p1Damage" class="percent blue">0%</span></span>
           <span>Lives: <span id="p1Lives">3</span></span>
@@ -143,14 +144,14 @@
       </div>
 
       <div class="card center-card">
-        Knock your opponent off the stage.<br />Higher damage = stronger knockback.
+        Fight the AI. Knock it off the stage.<br />Higher damage = stronger knockback.
       </div>
 
       <div class="card">
-        <div class="player-name red">Player 2</div>
+        <div class="player-name red">AI Enemy</div>
         <div class="stats">
-          <span>Damage: <span id="p2Damage" class="percent red">0%</span></span>
-          <span>Lives: <span id="p2Lives">3</span></span>
+          <span>Damage: <span id="aiDamage" class="percent red">0%</span></span>
+          <span>Lives: <span id="aiLives">3</span></span>
         </div>
       </div>
     </div>
@@ -158,8 +159,8 @@
     <canvas id="game" width="960" height="540"></canvas>
 
     <div class="controls">
-      <div class="card"><b>Player 1:</b> A/D move · W jump · F attack · G heavy attack</div>
-      <div class="card"><b>Player 2:</b> ←/→ move · ↑ jump · / attack · . heavy attack</div>
+      <div class="card"><b>Your controls:</b> A/D move · W jump · F attack · G heavy attack</div>
+      <div class="card"><b>AI:</b> Moves and attacks automatically. No Player 2 controls needed.</div>
     </div>
 
     <button onclick="resetGame()">Restart Match</button>
@@ -170,17 +171,21 @@
     const ctx = canvas.getContext('2d');
 
     const p1DamageEl = document.getElementById('p1Damage');
-    const p2DamageEl = document.getElementById('p2Damage');
+    const aiDamageEl = document.getElementById('aiDamage');
     const p1LivesEl = document.getElementById('p1Lives');
-    const p2LivesEl = document.getElementById('p2Lives');
+    const aiLivesEl = document.getElementById('aiLives');
 
     const keys = {};
     const gravity = 0.72;
     const friction = 0.83;
     const floorY = 430;
+
+    let player;
+    let ai;
     let hitPause = 0;
     let winnerText = '';
     let particles = [];
+    let screenShake = 0;
 
     const platforms = [
       { x: 170, y: 330, w: 180, h: 16 },
@@ -190,7 +195,7 @@
     ];
 
     class Fighter {
-      constructor(name, x, y, color, darkColor, controls, facing) {
+      constructor(name, x, y, color, darkColor, facing, isAI = false) {
         this.name = name;
         this.spawnX = x;
         this.spawnY = y;
@@ -202,8 +207,8 @@
         this.vy = 0;
         this.color = color;
         this.darkColor = darkColor;
-        this.controls = controls;
         this.facing = facing;
+        this.isAI = isAI;
         this.onGround = false;
         this.jumps = 2;
         this.damage = 0;
@@ -213,6 +218,9 @@
         this.heavyTimer = 0;
         this.invincible = 0;
         this.stun = 0;
+        this.aiDecisionTimer = 0;
+        this.aiMove = 0;
+        this.aiWantsJump = false;
       }
 
       respawn() {
@@ -224,6 +232,7 @@
         this.invincible = 120;
         this.stun = 0;
         this.jumps = 2;
+        this.attackCooldown = 35;
       }
 
       update(opponent) {
@@ -235,40 +244,13 @@
         if (this.invincible > 0) this.invincible--;
         if (this.stun > 0) this.stun--;
 
-        const canControl = this.stun <= 0;
-
-        if (canControl) {
-          if (keys[this.controls.left]) {
-            this.vx -= 0.85;
-            this.facing = -1;
-          }
-          if (keys[this.controls.right]) {
-            this.vx += 0.85;
-            this.facing = 1;
-          }
-          if (keys[this.controls.jump] && !this.controls.jumpHeld && this.jumps > 0) {
-            this.vy = -13.4;
-            this.jumps--;
-            this.onGround = false;
-            burst(this.x + this.w / 2, this.y + this.h, 'white', 7);
-          }
-
-          if (keys[this.controls.attack] && !this.controls.attackHeld && this.attackCooldown <= 0) {
-            this.attackTimer = 11;
-            this.attackCooldown = 26;
-            this.tryHit(opponent, false);
-          }
-
-          if (keys[this.controls.heavy] && !this.controls.heavyHeld && this.attackCooldown <= 0) {
-            this.heavyTimer = 18;
-            this.attackCooldown = 54;
-            this.tryHit(opponent, true);
+        if (this.stun <= 0) {
+          if (this.isAI) {
+            this.aiControl(opponent);
+          } else {
+            this.playerControl(opponent);
           }
         }
-
-        this.controls.jumpHeld = keys[this.controls.jump];
-        this.controls.attackHeld = keys[this.controls.attack];
-        this.controls.heavyHeld = keys[this.controls.heavy];
 
         this.vy += gravity;
         this.vx *= friction;
@@ -296,15 +278,120 @@
           }
         }
 
-        if (this.x < -120 || this.x > canvas.width + 120 || this.y > canvas.height + 130) {
+        if (this.x < -125 || this.x > canvas.width + 125 || this.y > canvas.height + 135) {
           this.lives--;
-          burst(Math.max(20, Math.min(canvas.width - 20, this.x)), Math.min(canvas.height - 20, this.y), this.color, 30);
+          burst(Math.max(20, Math.min(canvas.width - 20, this.x)), Math.min(canvas.height - 20, this.y), this.color, 34);
+          screenShake = 16;
+
           if (this.lives <= 0) {
             winnerText = opponent.name + ' Wins!';
           } else {
             this.respawn();
           }
         }
+      }
+
+      playerControl(opponent) {
+        if (keys['a']) {
+          this.vx -= 0.85;
+          this.facing = -1;
+        }
+        if (keys['d']) {
+          this.vx += 0.85;
+          this.facing = 1;
+        }
+
+        if (keys['w'] && !this.jumpHeld && this.jumps > 0) {
+          this.jump();
+        }
+
+        if (keys['f'] && !this.attackHeld && this.attackCooldown <= 0) {
+          this.startAttack(opponent, false);
+        }
+
+        if (keys['g'] && !this.heavyHeld && this.attackCooldown <= 0) {
+          this.startAttack(opponent, true);
+        }
+
+        this.jumpHeld = keys['w'];
+        this.attackHeld = keys['f'];
+        this.heavyHeld = keys['g'];
+      }
+
+      aiControl(opponent) {
+        const centerX = this.x + this.w / 2;
+        const opponentCenterX = opponent.x + opponent.w / 2;
+        const distanceX = opponentCenterX - centerX;
+        const absX = Math.abs(distanceX);
+        const distanceY = opponent.y - this.y;
+
+        this.facing = distanceX >= 0 ? 1 : -1;
+
+        const leftBlastDanger = this.x < 90;
+        const rightBlastDanger = this.x > canvas.width - 130;
+        const offMainStage = this.x < 230 || this.x + this.w > 735;
+        const belowStage = this.y > floorY - 80;
+
+        if (this.aiDecisionTimer <= 0) {
+          this.aiDecisionTimer = 12 + Math.floor(Math.random() * 18);
+
+          if (leftBlastDanger) {
+            this.aiMove = 1;
+            this.aiWantsJump = true;
+          } else if (rightBlastDanger) {
+            this.aiMove = -1;
+            this.aiWantsJump = true;
+          } else if (offMainStage && belowStage) {
+            this.aiMove = this.x < canvas.width / 2 ? 1 : -1;
+            this.aiWantsJump = true;
+          } else if (absX > 75) {
+            this.aiMove = distanceX > 0 ? 1 : -1;
+            this.aiWantsJump = Math.random() < 0.18 || distanceY < -55;
+          } else {
+            this.aiMove = Math.random() < 0.45 ? 0 : -Math.sign(distanceX || 1);
+            this.aiWantsJump = Math.random() < 0.06;
+          }
+        } else {
+          this.aiDecisionTimer--;
+        }
+
+        this.vx += this.aiMove * 0.74;
+
+        if (this.aiWantsJump && this.jumps > 0) {
+          this.jump();
+          this.aiWantsJump = false;
+        }
+
+        const sameHeightEnough = Math.abs(distanceY) < 80;
+        const closeEnough = absX < 70 && sameHeightEnough;
+        const heavyChance = opponent.damage > 65 ? 0.42 : 0.18;
+
+        if (closeEnough && this.attackCooldown <= 0) {
+          if (Math.random() < heavyChance) {
+            this.startAttack(opponent, true);
+          } else {
+            this.startAttack(opponent, false);
+          }
+        }
+      }
+
+      jump() {
+        this.vy = -13.4;
+        this.jumps--;
+        this.onGround = false;
+        burst(this.x + this.w / 2, this.y + this.h, 'white', 7);
+      }
+
+      startAttack(opponent, isHeavy) {
+        if (isHeavy) {
+          this.heavyTimer = 18;
+          this.attackCooldown = this.isAI ? 62 : 54;
+        } else {
+          this.attackTimer = 11;
+          this.attackCooldown = this.isAI ? 34 : 26;
+        }
+
+        this.tryHit(opponent, isHeavy);
       }
 
       attackBox(isHeavy) {
@@ -321,17 +408,20 @@
       tryHit(opponent, isHeavy) {
         const box = this.attackBox(isHeavy);
         if (opponent.invincible > 0) return;
+
         if (rectsOverlap(box, opponent)) {
           const damageGain = isHeavy ? 18 : 9;
           const base = isHeavy ? 8.8 : 5.4;
-          const scaling = opponent.damage * (isHeavy ? 0.072 : 0.045);
+          const scaling = opponent.damage * (isHeavy ? 0.074 : 0.047);
           const direction = this.facing;
+
           opponent.damage += damageGain;
           opponent.vx = direction * (base + scaling);
           opponent.vy = -(isHeavy ? 8.8 : 6.2) - opponent.damage * 0.012;
-          opponent.stun = isHeavy ? 23 : 13;
+          opponent.stun = isHeavy ? 24 : 13;
           hitPause = isHeavy ? 8 : 5;
-          burst(opponent.x + opponent.w / 2, opponent.y + opponent.h / 2, isHeavy ? '#fde047' : '#fff', isHeavy ? 22 : 12);
+          screenShake = isHeavy ? 12 : 7;
+          burst(opponent.x + opponent.w / 2, opponent.y + opponent.h / 2, isHeavy ? '#fde047' : '#ffffff', isHeavy ? 23 : 13);
         }
       }
 
@@ -374,30 +464,32 @@
         ctx.lineTo(this.facing * armReach, this.heavyTimer > 0 ? -7 : 7);
         ctx.stroke();
 
-        if (this.attackTimer > 0 || this.heavyTimer > 0) {
-          const isHeavy = this.heavyTimer > 0;
-          const box = this.attackBox(isHeavy);
-          ctx.restore();
-          ctx.fillStyle = isHeavy ? 'rgba(253,224,71,.35)' : 'rgba(255,255,255,.28)';
-          roundRect(box.x, box.y, box.w, box.h, 18);
-          ctx.fill();
-          return;
+        if (this.isAI) {
+          ctx.fillStyle = '#111827';
+          ctx.font = '900 12px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('AI', 0, -31);
+          ctx.textAlign = 'left';
         }
 
         ctx.restore();
+
+        if (this.attackTimer > 0 || this.heavyTimer > 0) {
+          const isHeavy = this.heavyTimer > 0;
+          const box = this.attackBox(isHeavy);
+          ctx.fillStyle = isHeavy ? 'rgba(253,224,71,.35)' : 'rgba(255,255,255,.28)';
+          roundRect(box.x, box.y, box.w, box.h, 18);
+          ctx.fill();
+        }
       }
     }
 
-    const p1Controls = { left: 'a', right: 'd', jump: 'w', attack: 'f', heavy: 'g' };
-    const p2Controls = { left: 'arrowleft', right: 'arrowright', jump: 'arrowup', attack: '/', heavy: '.' };
-
-    let p1, p2;
-
     function resetGame() {
-      p1 = new Fighter('Player 1', 285, 145, '#38bdf8', '#0369a1', p1Controls, 1);
-      p2 = new Fighter('Player 2', 635, 145, '#fb7185', '#be123c', p2Controls, -1);
+      player = new Fighter('You', 285, 145, '#38bdf8', '#0369a1', 1, false);
+      ai = new Fighter('AI Enemy', 635, 145, '#fb7185', '#be123c', -1, true);
       winnerText = '';
       hitPause = 0;
+      screenShake = 0;
       particles = [];
       updateHud();
     }
@@ -453,8 +545,6 @@
     }
 
     function drawBackground() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
       sky.addColorStop(0, '#60a5fa');
       sky.addColorStop(0.55, '#bae6fd');
@@ -496,15 +586,15 @@
     }
 
     function updateHud() {
-      p1DamageEl.textContent = Math.floor(p1.damage) + '%';
-      p2DamageEl.textContent = Math.floor(p2.damage) + '%';
-      p1LivesEl.textContent = p1.lives;
-      p2LivesEl.textContent = p2.lives;
+      p1DamageEl.textContent = Math.floor(player.damage) + '%';
+      aiDamageEl.textContent = Math.floor(ai.damage) + '%';
+      p1LivesEl.textContent = player.lives;
+      aiLivesEl.textContent = ai.lives;
     }
 
     function drawWinner() {
       if (!winnerText) return;
-      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.fillStyle = 'rgba(0,0,0,.58)';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = 'white';
       ctx.textAlign = 'center';
@@ -516,23 +606,34 @@
     }
 
     function gameLoop() {
+      ctx.save();
+
+      if (screenShake > 0) {
+        const shakeX = (Math.random() - 0.5) * screenShake;
+        const shakeY = (Math.random() - 0.5) * screenShake;
+        ctx.translate(shakeX, shakeY);
+        screenShake *= 0.82;
+        if (screenShake < 0.5) screenShake = 0;
+      }
+
       drawBackground();
       drawPlatforms();
 
       if (hitPause <= 0) {
-        p1.update(p2);
-        p2.update(p1);
+        player.update(ai);
+        ai.update(player);
         updateParticles();
       } else {
         hitPause--;
       }
 
-      p1.draw();
-      p2.draw();
+      player.draw();
+      ai.draw();
       drawParticles();
       drawWinner();
-      updateHud();
 
+      ctx.restore();
+      updateHud();
       requestAnimationFrame(gameLoop);
     }
 
