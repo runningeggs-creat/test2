@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mini Platform Fighter</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at top, #23395d 0%, #111827 55%, #050816 100%);
+      font-family: Arial, Helvetica, sans-serif;
+      color: white;
+      overflow: hidden;
+    }
+
+    .wrap {
+      width: min(1100px, 96vw);
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      letter-spacing: 1px;
+      font-size: clamp(26px, 4vw, 46px);
+      text-shadow: 0 4px 18px rgba(0,0,0,.45);
+    }
+
+    .hud {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .card {
+      background: rgba(255,255,255,.1);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 18px;
+      padding: 10px 14px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.25);
+      backdrop-filter: blur(8px);
+    }
+
+    .player-name {
+      font-weight: 800;
+      font-size: 18px;
+      margin-bottom: 6px;
+    }
+
+    .stats {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .percent {
+      font-size: 32px;
+      font-weight: 900;
+    }
+
+    .red { color: #ff6b6b; }
+    .blue { color: #5ee7ff; }
+
+    .center-card {
+      font-size: 14px;
+      line-height: 1.35;
+      opacity: .95;
+    }
+
+    canvas {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      display: block;
+      border-radius: 24px;
+      background: linear-gradient(#7dd3fc, #bae6fd 45%, #fef3c7 46%, #a7f3d0 100%);
+      border: 3px solid rgba(255,255,255,.4);
+      box-shadow: 0 24px 70px rgba(0,0,0,.4);
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+      font-size: 14px;
+      color: rgba(255,255,255,.88);
+    }
+
+    .controls b {
+      color: white;
+    }
+
+    button {
+      margin-top: 12px;
+      border: 0;
+      padding: 11px 20px;
+      border-radius: 999px;
+      font-weight: 900;
+      font-size: 15px;
+      background: white;
+      color: #111827;
+      cursor: pointer;
+      box-shadow: 0 10px 30px rgba(0,0,0,.25);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    @media (max-width: 720px) {
+      .hud {
+        grid-template-columns: 1fr;
+      }
+      .controls {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Mini Platform Fighter</h1>
+
+    <div class="hud">
+      <div class="card">
+        <div class="player-name blue">Player 1</div>
+        <div class="stats">
+          <span>Damage: <span id="p1Damage" class="percent blue">0%</span></span>
+          <span>Lives: <span id="p1Lives">3</span></span>
+        </div>
+      </div>
+
+      <div class="card center-card">
+        Knock your opponent off the stage.<br />Higher damage = stronger knockback.
+      </div>
+
+      <div class="card">
+        <div class="player-name red">Player 2</div>
+        <div class="stats">
+          <span>Damage: <span id="p2Damage" class="percent red">0%</span></span>
+          <span>Lives: <span id="p2Lives">3</span></span>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="game" width="960" height="540"></canvas>
+
+    <div class="controls">
+      <div class="card"><b>Player 1:</b> A/D move · W jump · F attack · G heavy attack</div>
+      <div class="card"><b>Player 2:</b> ←/→ move · ↑ jump · / attack · . heavy attack</div>
+    </div>
+
+    <button onclick="resetGame()">Restart Match</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const p1DamageEl = document.getElementById('p1Damage');
+    const p2DamageEl = document.getElementById('p2Damage');
+    const p1LivesEl = document.getElementById('p1Lives');
+    const p2LivesEl = document.getElementById('p2Lives');
+
+    const keys = {};
+    const gravity = 0.72;
+    const friction = 0.83;
+    const floorY = 430;
+    let hitPause = 0;
+    let winnerText = '';
+    let particles = [];
+
+    const platforms = [
+      { x: 170, y: 330, w: 180, h: 16 },
+      { x: 610, y: 330, w: 180, h: 16 },
+      { x: 390, y: 245, w: 180, h: 16 },
+      { x: 220, y: floorY, w: 520, h: 28 }
+    ];
+
+    class Fighter {
+      constructor(name, x, y, color, darkColor, controls, facing) {
+        this.name = name;
+        this.spawnX = x;
+        this.spawnY = y;
+        this.x = x;
+        this.y = y;
+        this.w = 42;
+        this.h = 66;
+        this.vx = 0;
+        this.vy = 0;
+        this.color = color;
+        this.darkColor = darkColor;
+        this.controls = controls;
+        this.facing = facing;
+        this.onGround = false;
+        this.jumps = 2;
+        this.damage = 0;
+        this.lives = 3;
+        this.attackCooldown = 0;
+        this.attackTimer = 0;
+        this.heavyTimer = 0;
+        this.invincible = 0;
+        this.stun = 0;
+      }
+
+      respawn() {
+        this.x = this.spawnX;
+        this.y = this.spawnY;
+        this.vx = 0;
+        this.vy = 0;
+        this.damage = 0;
+        this.invincible = 120;
+        this.stun = 0;
+        this.jumps = 2;
+      }
+
+      update(opponent) {
+        if (winnerText) return;
+
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        if (this.attackTimer > 0) this.attackTimer--;
+        if (this.heavyTimer > 0) this.heavyTimer--;
+        if (this.invincible > 0) this.invincible--;
+        if (this.stun > 0) this.stun--;
+
+        const canControl = this.stun <= 0;
+
+        if (canControl) {
+          if (keys[this.controls.left]) {
+            this.vx -= 0.85;
+            this.facing = -1;
+          }
+          if (keys[this.controls.right]) {
+            this.vx += 0.85;
+            this.facing = 1;
+          }
+          if (keys[this.controls.jump] && !this.controls.jumpHeld && this.jumps > 0) {
+            this.vy = -13.4;
+            this.jumps--;
+            this.onGround = false;
+            burst(this.x + this.w / 2, this.y + this.h, 'white', 7);
+          }
+
+          if (keys[this.controls.attack] && !this.controls.attackHeld && this.attackCooldown <= 0) {
+            this.attackTimer = 11;
+            this.attackCooldown = 26;
+            this.tryHit(opponent, false);
+          }
+
+          if (keys[this.controls.heavy] && !this.controls.heavyHeld && this.attackCooldown <= 0) {
+            this.heavyTimer = 18;
+            this.attackCooldown = 54;
+            this.tryHit(opponent, true);
+          }
+        }
+
+        this.controls.jumpHeld = keys[this.controls.jump];
+        this.controls.attackHeld = keys[this.controls.attack];
+        this.controls.heavyHeld = keys[this.controls.heavy];
+
+        this.vy += gravity;
+        this.vx *= friction;
+
+        if (this.vx > 8) this.vx = 8;
+        if (this.vx < -8) this.vx = -8;
+        if (this.vy > 18) this.vy = 18;
+
+        const oldY = this.y;
+        this.x += this.vx;
+        this.y += this.vy;
+        this.onGround = false;
+
+        for (const p of platforms) {
+          const wasAbove = oldY + this.h <= p.y + 5;
+          const falling = this.vy >= 0;
+          const horizontal = this.x + this.w > p.x && this.x < p.x + p.w;
+          const vertical = this.y + this.h >= p.y && this.y + this.h <= p.y + p.h + 18;
+
+          if (wasAbove && falling && horizontal && vertical) {
+            this.y = p.y - this.h;
+            this.vy = 0;
+            this.onGround = true;
+            this.jumps = 2;
+          }
+        }
+
+        if (this.x < -120 || this.x > canvas.width + 120 || this.y > canvas.height + 130) {
+          this.lives--;
+          burst(Math.max(20, Math.min(canvas.width - 20, this.x)), Math.min(canvas.height - 20, this.y), this.color, 30);
+          if (this.lives <= 0) {
+            winnerText = opponent.name + ' Wins!';
+          } else {
+            this.respawn();
+          }
+        }
+      }
+
+      attackBox(isHeavy) {
+        const range = isHeavy ? 68 : 52;
+        const height = isHeavy ? 48 : 36;
+        return {
+          x: this.facing === 1 ? this.x + this.w : this.x - range,
+          y: this.y + 15,
+          w: range,
+          h: height
+        };
+      }
+
+      tryHit(opponent, isHeavy) {
+        const box = this.attackBox(isHeavy);
+        if (opponent.invincible > 0) return;
+        if (rectsOverlap(box, opponent)) {
+          const damageGain = isHeavy ? 18 : 9;
+          const base = isHeavy ? 8.8 : 5.4;
+          const scaling = opponent.damage * (isHeavy ? 0.072 : 0.045);
+          const direction = this.facing;
+          opponent.damage += damageGain;
+          opponent.vx = direction * (base + scaling);
+          opponent.vy = -(isHeavy ? 8.8 : 6.2) - opponent.damage * 0.012;
+          opponent.stun = isHeavy ? 23 : 13;
+          hitPause = isHeavy ? 8 : 5;
+          burst(opponent.x + opponent.w / 2, opponent.y + opponent.h / 2, isHeavy ? '#fde047' : '#fff', isHeavy ? 22 : 12);
+        }
+      }
+
+      draw() {
+        const blink = this.invincible > 0 && Math.floor(this.invincible / 6) % 2 === 0;
+        if (blink) return;
+
+        ctx.save();
+        ctx.translate(this.x + this.w / 2, this.y + this.h / 2);
+
+        ctx.fillStyle = 'rgba(0,0,0,.22)';
+        ctx.beginPath();
+        ctx.ellipse(0, this.h / 2 + 8, this.w * .55, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = this.color;
+        roundRect(-this.w / 2, -this.h / 2, this.w, this.h, 12);
+        ctx.fill();
+
+        ctx.fillStyle = this.darkColor;
+        roundRect(-this.w / 2 + 7, -this.h / 2 + 10, this.w - 14, 18, 8);
+        ctx.fill();
+
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        ctx.arc(this.facing * 7, -16, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#111827';
+        ctx.beginPath();
+        ctx.arc(this.facing * 9, -16, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = this.darkColor;
+        ctx.lineWidth = 7;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(this.facing * 12, -2);
+        const armReach = this.attackTimer > 0 ? 35 : this.heavyTimer > 0 ? 48 : 20;
+        ctx.lineTo(this.facing * armReach, this.heavyTimer > 0 ? -7 : 7);
+        ctx.stroke();
+
+        if (this.attackTimer > 0 || this.heavyTimer > 0) {
+          const isHeavy = this.heavyTimer > 0;
+          const box = this.attackBox(isHeavy);
+          ctx.restore();
+          ctx.fillStyle = isHeavy ? 'rgba(253,224,71,.35)' : 'rgba(255,255,255,.28)';
+          roundRect(box.x, box.y, box.w, box.h, 18);
+          ctx.fill();
+          return;
+        }
+
+        ctx.restore();
+      }
+    }
+
+    const p1Controls = { left: 'a', right: 'd', jump: 'w', attack: 'f', heavy: 'g' };
+    const p2Controls = { left: 'arrowleft', right: 'arrowright', jump: 'arrowup', attack: '/', heavy: '.' };
+
+    let p1, p2;
+
+    function resetGame() {
+      p1 = new Fighter('Player 1', 285, 145, '#38bdf8', '#0369a1', p1Controls, 1);
+      p2 = new Fighter('Player 2', 635, 145, '#fb7185', '#be123c', p2Controls, -1);
+      winnerText = '';
+      hitPause = 0;
+      particles = [];
+      updateHud();
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    }
+
+    function burst(x, y, color, count) {
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 10,
+          vy: (Math.random() - 0.7) * 10,
+          life: 26 + Math.random() * 20,
+          maxLife: 46,
+          color,
+          size: 3 + Math.random() * 5
+        });
+      }
+    }
+
+    function updateParticles() {
+      for (const pt of particles) {
+        pt.x += pt.vx;
+        pt.y += pt.vy;
+        pt.vy += 0.28;
+        pt.life--;
+      }
+      particles = particles.filter(pt => pt.life > 0);
+    }
+
+    function drawParticles() {
+      for (const pt of particles) {
+        ctx.globalAlpha = Math.max(0, pt.life / pt.maxLife);
+        ctx.fillStyle = pt.color;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function drawBackground() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      sky.addColorStop(0, '#60a5fa');
+      sky.addColorStop(0.55, '#bae6fd');
+      sky.addColorStop(1, '#86efac');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      cloud(130, 95, 1.0);
+      cloud(760, 95, 1.15);
+      cloud(495, 145, 0.75);
+
+      ctx.fillStyle = 'rgba(15,23,42,.12)';
+      ctx.beginPath();
+      ctx.arc(480, 500, 650, Math.PI, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function cloud(x, y, s) {
+      ctx.beginPath();
+      ctx.arc(x, y, 22 * s, 0, Math.PI * 2);
+      ctx.arc(x + 25 * s, y - 10 * s, 28 * s, 0, Math.PI * 2);
+      ctx.arc(x + 57 * s, y, 24 * s, 0, Math.PI * 2);
+      ctx.arc(x + 28 * s, y + 12 * s, 26 * s, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawPlatforms() {
+      for (const p of platforms) {
+        ctx.fillStyle = '#166534';
+        roundRect(p.x, p.y, p.w, p.h, 8);
+        ctx.fill();
+        ctx.fillStyle = '#22c55e';
+        roundRect(p.x, p.y - 9, p.w, 16, 8);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.28)';
+        ctx.fillRect(p.x + 14, p.y - 5, p.w - 28, 3);
+      }
+    }
+
+    function updateHud() {
+      p1DamageEl.textContent = Math.floor(p1.damage) + '%';
+      p2DamageEl.textContent = Math.floor(p2.damage) + '%';
+      p1LivesEl.textContent = p1.lives;
+      p2LivesEl.textContent = p2.lives;
+    }
+
+    function drawWinner() {
+      if (!winnerText) return;
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white';
+      ctx.textAlign = 'center';
+      ctx.font = '900 64px Arial';
+      ctx.fillText(winnerText, canvas.width / 2, canvas.height / 2 - 20);
+      ctx.font = '700 24px Arial';
+      ctx.fillText('Press Restart Match to play again', canvas.width / 2, canvas.height / 2 + 30);
+      ctx.textAlign = 'left';
+    }
+
+    function gameLoop() {
+      drawBackground();
+      drawPlatforms();
+
+      if (hitPause <= 0) {
+        p1.update(p2);
+        p2.update(p1);
+        updateParticles();
+      } else {
+        hitPause--;
+      }
+
+      p1.draw();
+      p2.draw();
+      drawParticles();
+      drawWinner();
+      updateHud();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    window.addEventListener('keydown', (e) => {
+      keys[e.key.toLowerCase()] = true;
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', '/', '.'].includes(e.key)) {
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keys[e.key.toLowerCase()] = false;
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', '/', '.'].includes(e.key)) {
+        e.preventDefault();
+      }
+    });
+
+    resetGame();
+    gameLoop();
+  </script>
+</body>
+</html>
